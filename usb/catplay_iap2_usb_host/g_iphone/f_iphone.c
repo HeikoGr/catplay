@@ -154,11 +154,16 @@ static int ep0_zlp(struct usb_composite_dev *cdev)
  * us - and log how long that took, so a capture shows whether the ACK made
  * it out at all. (Measured on a NAC Wave 2: 16-74us.)
  *
- * There is one composite ep0 request and one gadget, so the pending state
- * is kept in file scope. If the host never runs the status stage and never
- * sends another SETUP either, the callback never fires and the role switch
- * does not happen - a head unit that does that would not have switched
- * roles anyway.
+ * The pending state is kept in file scope, shared by every g_iphone
+ * instance (one per UDC) - there is exactly one slot. f_iphone_setup()
+ * refuses a new 0x51 while one is already pending (see there) so a second
+ * request, on this gadget or another one, cannot overwrite it and make the
+ * first completion run the second's orig_complete on the wrong gadget. If
+ * the host never runs the status stage and never sends another SETUP
+ * either, the callback never fires and the role switch does not happen - a
+ * head unit that does that would not have switched roles anyway - but the
+ * slot is then stuck; this is accepted as the same class of not-fully-
+ * recoverable condition, not made worse by it.
  */
 static struct g_iphone *role_switch_ack_gadget;
 static void (*role_switch_ack_orig_complete)(struct usb_ep *ep,
@@ -172,6 +177,7 @@ static void f_iphone_role_switch_ack_complete(struct usb_ep *ep,
 	u64 dt_us = div_u64(ktime_get_ns() - role_switch_ack_queued_ns, 1000);
 
 	req->complete = role_switch_ack_orig_complete;
+	role_switch_ack_gadget = NULL;
 	if (role_switch_ack_orig_complete)
 		role_switch_ack_orig_complete(ep, req);
 
@@ -252,6 +258,19 @@ static int f_iphone_setup(struct usb_function *f,
 			if (!cdev->req || !cdev->gadget->ep0)
 				return -ENODEV;
 
+			/*
+			 * role_switch_ack_gadget is the one pending-ACK slot
+			 * (see the comment above). Refuse a second 0x51 while
+			 * it is occupied instead of overwriting it - by this
+			 * gadget or another one - which would make the first
+			 * completion run the second's orig_complete on the
+			 * wrong gadget.
+			 */
+			if (role_switch_ack_gadget) {
+				pr_warn("iPhone: role switch already pending, ignoring\n");
+				return ep0_zlp(cdev);
+			}
+
 			iphone_gadget->role_switch_requested = true;
 
 			/* The status transition happens once the host has our ZLP. */
@@ -264,6 +283,7 @@ static int f_iphone_setup(struct usb_function *f,
 			if (ret) {
 				cdev->req->complete = role_switch_ack_orig_complete;
 				iphone_gadget->role_switch_requested = false;
+				role_switch_ack_gadget = NULL;
 				pr_warn("iPhone: role switch ZLP queue failed: %d\n", ret);
 			}
 			return ret;

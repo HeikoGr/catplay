@@ -4,6 +4,14 @@ use crate::{
 };
 
 impl AirPlayReceiver {
+    /// Formats offered to the iPhone in this receiver's `/info`.
+    ///
+    /// Constant on purpose: this describes what this end can decode, not what
+    /// anything further downstream can play. Where the receiver feeds a car
+    /// (see audio_proxy.rs), the codec terminates at the decoder and the car
+    /// is handed PCM either way, so narrowing this list to one car's
+    /// capabilities would only cost quality - dropping AAC-LC here, say, makes
+    /// the iPhone send uncompressed PCM over Wi-Fi instead.
     pub fn setup_audio_defaults(r: &mut InfoMessageResponse) {
         // --- Main Audio - Compatibility ---
         r.audio_formats.push(AudioFormatStruct {

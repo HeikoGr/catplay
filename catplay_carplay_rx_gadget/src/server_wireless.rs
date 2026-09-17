@@ -291,6 +291,17 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
         self.load_bt_last_connect();
         self.sync_bt_last_connect();
 
+        // Once the phone has an iAP2 link there is nothing left to invite it
+        // over Bluetooth for, and every further ConnectProfile only competes
+        // with the link that already exists - BlueZ answers those with
+        // "Operation already in progress". Waiting for Receiving to stop the
+        // task is too late: that is the AirPlay session, which is what the
+        // reconnect is supposed to lead to in the first place.
+        if self.last_bt_peer_task.is_some() && self.get_bt_last_connect().is_some() {
+            info!("Bluetooth peer is connected, stopping the last-connect task");
+            self.last_bt_peer_task.take();
+        }
+
         // Healthcheck - AirPlay server
         if let Some(_server) = self.server.as_ref() {
             // TODO - detect accept() failures
@@ -459,7 +470,14 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
                     let peer_mac = *peer_mac;
                     let task = spawn(async move {
                         const INVITE_DEADLINE: Duration = Duration::from_millis(60000);
-                        const INVITE_RETRY: Duration = Duration::from_millis(100);
+                        // iap2_connect() is a BlueZ ConnectProfile: SDP discovery
+                        // plus the L2CAP/RFCOMM setup, seconds rather than
+                        // milliseconds. Retrying every 100ms only stacked attempts
+                        // on top of each other - ~150 of them in the 15s a
+                        // reconnect took - and BlueZ rejected them with
+                        // "Operation already in progress". Leave each attempt
+                        // enough room to finish before starting the next.
+                        const INVITE_RETRY: Duration = Duration::from_millis(3000);
 
                         let invite_deadline = Instant::now() + INVITE_DEADLINE;
                         let mut last_err = None;

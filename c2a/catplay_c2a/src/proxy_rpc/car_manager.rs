@@ -44,6 +44,10 @@ pub struct CarManager {
     modes: ModesArbiter,
     night_mode: bool,
 
+    /// Set when the car asks for the CarPlay UI, consumed by the next screen
+    /// reclaim attempt in [Self::reconcile].
+    screen_ui_requested: bool,
+
     tx_current: Option<LazyAsync<RtspResult<()>>>,
     tx_queue: VecDeque<BoxFuture<'static, RtspResult<()>>>,
     pending_screen_setup: Option<oneshot::Receiver<TeardownGuard<ScreenTransmitProxy>>>,
@@ -101,6 +105,7 @@ impl CarManager {
 
             tx_queue: Default::default(),
             night_mode: *info.night_mode.clone().unwrap_or_default(),
+            screen_ui_requested: false,
             modes: ModesArbiter::new(&info.modes),
             error: None,
             pending_screen_setup: Default::default(),
@@ -248,7 +253,21 @@ impl CarManager {
 
         // Don't attempt to forcefully steal Screen if we have a peer and arbitration is active as that will be glitchy
         if self.iphone_peer.is_none() {
-            self.modes.try_steal_screen(ResourceTransferPriority::NiceToHave);
+            // A car that took the screen sets a take constraint with it, and
+            // UserInitiated only yields to UserInitiated - so NiceToHave alone
+            // can never get the screen back once the car claimed it that way,
+            // and this loop would keep asking forever without effect.
+            //
+            // requestUI is by definition a direct user action asking for the
+            // CarPlay UI, which is what entitles us to answer at that
+            // priority. It buys exactly one attempt, so losing the screen
+            // again cannot turn into a tug-of-war with the car.
+            let priority = match !self.modes.has_screen() && core::mem::take(&mut self.screen_ui_requested) {
+                true => ResourceTransferPriority::UserInitiated,
+                false => ResourceTransferPriority::NiceToHave,
+            };
+
+            self.modes.try_steal_screen(priority);
         }
         self.flush_modes();
 
@@ -615,8 +634,20 @@ impl CarManager {
                 warn!("requestUI during overlay!");
                 self.modes.try_steal_screen(ResourceTransferPriority::UserInitiated);
                 self.modes.mark_dirty();
+                // The steal above is a no-op if the screen is already ours,
+                // and the car can still take it away again before the SETUP
+                // this request is meant to trigger has gone out. Remember the
+                // ask so the reclaim in reconcile() can use the priority the
+                // user action entitles us to.
+                self.screen_ui_requested = true;
 
-                sleep(Duration::from_millis(100)).await;
+                // Answer right away. This runs awaited inline in reconcile(),
+                // and the modesChanged for the steal above is only queued
+                // further down in that same pass - so sleeping here cannot
+                // let it go out first, it just holds up the loop that would
+                // send it, along with the screen SETUP this request is asking
+                // for. Long enough, measured, for the car to reclaim the
+                // screen and for the SETUP to land on one we no longer own.
                 cmd.respond_ok();
             }
             _ => cmd.respond_ok(),

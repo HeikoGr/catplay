@@ -405,7 +405,7 @@ impl LinkLayer {
                 next
             }
             NegotiationTx::FinalAck => {
-                let packet = Packet::new_ack(self.own_seq, peer_seq, LSPPayload::SESSION_ID_CONTROL, None);
+                let packet = Packet::new_ack(self.own_seq - 1, peer_seq, LSPPayload::SESSION_ID_CONTROL, None);
                 self.negotiation.transition_accepted();
                 self.change_state(LinkStatus::Writable);
                 Some(packet.into())
@@ -553,7 +553,7 @@ impl LinkLayer {
 
         if deadline_elapsed || ack_budget_exceeded || forced {
             let peer_seq = self.peer_seq?;
-            let packet = Packet::new_ack(self.own_seq, peer_seq, LSPPayload::SESSION_ID_CONTROL, None);
+            let packet = Packet::new_ack(self.own_seq - 1, peer_seq, LSPPayload::SESSION_ID_CONTROL, None);
             let next = self.prepare_ackable(packet);
             debug!(target: self.logger, "Fallback: forced empty ACK now {:?}", self.pending_ack);
             self.pending_ack.reset();

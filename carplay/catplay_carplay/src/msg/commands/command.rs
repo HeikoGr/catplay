@@ -142,10 +142,7 @@ impl<'de> Deserialize<'de> for Command {
             .map_err(|_| serde::de::Error::custom(format!("unknown AirPlay command type: {command_type}")))?;
 
         let from_nested = |map: &mut Dictionary| -> Result<Value, D::Error> {
-            let Some(params) = map.remove("params") else {
-                return Err(serde::de::Error::missing_field("params"));
-            };
-            Ok(params)
+            Ok(map.remove("params").unwrap_or_else(|| Value::Dictionary(Dictionary::new())))
         };
         let from_flat = |map: Dictionary| -> Value { Value::Dictionary(map) };
 
@@ -176,9 +173,9 @@ struct CommandRawTypeRef {
 
 #[cfg(test)]
 mod tests {
-    use catplay_plist::{Dictionary, Value, from_bytes};
+    use catplay_plist::{Dictionary, Value, from_bytes, to_writer_binary};
 
-    use crate::msg::Command;
+    use crate::msg::{Command, CommandRequestUI};
 
     #[test]
     fn test_serialize_payload_direct_hid() {
@@ -221,5 +218,45 @@ mod tests {
 
         let deser = Command::deserialize(&payload).unwrap();
         assert_eq!(deser, report);
+    }
+
+    #[test]
+    fn test_deserialize_request_ui_params_variants() {
+        let cases = [
+            {
+                let mut params = Dictionary::new();
+                params.insert("url".into(), "https://example.com".into());
+
+                let mut command = Dictionary::new();
+                command.insert("type".into(), "requestUI".into());
+                command.insert("params".into(), params.into());
+                command
+            },
+            {
+                let mut command = Dictionary::new();
+                command.insert("type".into(), "requestUI".into());
+                command.insert("params".into(), Dictionary::new().into());
+                command
+            },
+            {
+                let mut command = Dictionary::new();
+                command.insert("type".into(), "requestUI".into());
+                command
+            },
+        ];
+        let expected_urls = [Some("https://example.com"), None, None];
+
+        for (command, expected_url) in cases.into_iter().zip(expected_urls) {
+            let mut payload = Vec::new();
+            to_writer_binary(&mut payload, &command).unwrap();
+
+            let deserialized = Command::deserialize(&payload).unwrap();
+            assert_eq!(
+                deserialized,
+                Command::RequestUI(CommandRequestUI {
+                    url: expected_url.map(str::to_owned),
+                })
+            );
+        }
     }
 }

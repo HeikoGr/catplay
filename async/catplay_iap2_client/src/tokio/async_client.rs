@@ -135,7 +135,12 @@ impl CsmClientHandle for AsyncHandle {
     }
 
     fn send_file_reserve(&self) -> Option<u8> {
-        self.link.lock().unwrap().files().reserve_file_tx().map(|t| t.0)
+        self.link
+            .lock()
+            .unwrap()
+            .files()
+            .reserve_file_tx()
+            .map(|t| t.0)
     }
 
     fn send_file(&self, file_id: u8, file_type: u16, setup_data: &[u8], source: Vec<u8>) {
@@ -403,7 +408,9 @@ impl AsyncClient {
                             }
                             CsmFileTransferEvent::Cancelled => debug!("File cancelled @ {id}"),
                         }
-                        self.session.on_file_event(id, local_event, self.handle.clone()).await?;
+                        self.session
+                            .on_file_event(id, local_event, self.handle.clone())
+                            .await?;
                     }
                 }
             }
@@ -426,7 +433,8 @@ impl AsyncClient {
             return Err(err);
         }
 
-        self.deadline = link.sleep();
+        // Don't schedule wake up for retransmissions if we can't transmit, to prevent infinite CPU spin
+        self.deadline = link.sleep().filter(|_| allows_tx);
         Ok(produced_events)
     }
 }

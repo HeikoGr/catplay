@@ -173,7 +173,10 @@ impl<T: RtspTransmitterCallback> TcpSession for RtspTransmitter<T> {
                 strace!(tracer, "Received response: \n{}", resp_for_trace);
             }
 
-            warn!("Received response: \n{resp}");
+            match resp.cseq.and_then(|cseq| self.rtsp_drain.take_in_flight(cseq)) {
+                Some((label, took)) => warn!("Received response to {label} after {took:?}: \n{resp}"),
+                None => warn!("Received response: \n{resp}"),
+            }
 
             self.rtsp_drain.feed(resp);
         }

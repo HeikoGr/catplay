@@ -1,5 +1,5 @@
 use catplay_tokio::TcpHelper;
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline, mpsc};
+use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, deadline, mpsc, sleep};
 use futures::{FutureExt, StreamExt};
 use log::{debug, info, trace, warn};
 use std::time::{Duration, Instant};
@@ -77,6 +77,10 @@ impl Default for MediaStreams {
 impl AirPlayTransmitterImpl {
     const TCP_CONN_TIMEOUT_SCREEN: Duration = Duration::from_millis(2000);
     const FEEDBACK_INTERVAL: Duration = Duration::from_millis(1000);
+    // See do_setup_audio(). Worst case on that path: TEARDOWN of the old stream (latency + one
+    // round trip + settle), then up to two SETUP attempts - stays under the iPhone's ~10s.
+    const AUDIO_SETUP_TIMEOUT: Duration = Duration::from_millis(3000);
+    const AUDIO_SETUP_RETRY_DELAY: Duration = Duration::from_millis(300);
 
     pub fn new(streams: AirPlayTransmitterBootstrapStreams) -> Self {
         let (teardown_queue_tx, teardown_queue) = mpsc::unbounded();
@@ -244,7 +248,25 @@ impl AirPlayTransmitterImpl {
 
         info!("Audio setup request to send: {setup:?}");
 
-        let resp = client.setup(setup).await?;
+        // The iPhone gives us ~10s to answer its own SETUP, and this proxied one is on that
+        // critical path: keep it well inside that budget so a slow receiver produces an error the
+        // phone still gets to see, instead of a torn-down session. A receiver that rejects the
+        // stream outright (4xx) gets one more try after a short pause - seen when the SETUP
+        // followed a TEARDOWN of the same stream too closely.
+        let setup_client = client.with_timeout(Self::AUDIO_SETUP_TIMEOUT);
+        let resp = match setup_client.setup(setup.clone()).await {
+            Err(RtspError::Code(status)) if (400..500).contains(&status.as_code()) => {
+                warn!(
+                    "Audio setup {stream_type:?} rejected with {} {}, retrying once after {:?}",
+                    status.as_code(),
+                    status.reason_phrase(),
+                    Self::AUDIO_SETUP_RETRY_DELAY
+                );
+                sleep(Self::AUDIO_SETUP_RETRY_DELAY).await;
+                setup_client.setup(setup).await?
+            }
+            other => other?,
+        };
         let resp = resp.streams.first().ok_or(RtspError::ProtocolViolationGeneric)?;
         if resp.stream_type != stream_type {
             return Err(RtspError::ProtocolViolationGeneric);

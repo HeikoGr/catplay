@@ -66,7 +66,7 @@ impl AudioProxyUtil {
         );
 
         let guard = guard_fut
-            .await // blocks RTSP thread with a 2s timeout
+            .await // blocks the RTSP thread; bounded by AUDIO_SETUP_TIMEOUT in the transmitter
             .inspect_err(|err| error!("Failed to setup audio transmitter? {err}"))?;
         player_guard.lock().unwrap().replace(guard);
 

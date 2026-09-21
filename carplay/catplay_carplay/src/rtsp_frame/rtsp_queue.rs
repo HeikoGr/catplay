@@ -1,6 +1,6 @@
 use crate::rtsp_frame::{RtspError, RtspRequest, RtspResponse, RtspResult};
 use catplay_util::{EventSleeper, EventToken, Sleep, event_select, notify::Notify, oneshot, sleep_until};
-use log::debug;
+use log::{debug, warn};
 use std::{
     collections::{BTreeMap, VecDeque},
     future::Future,
@@ -30,12 +30,20 @@ struct FifoPending {
     sender: Option<RtspSender>,
 }
 
+/// A request that has been written to the socket and is waiting for its response.
+/// Used only for diagnostics: how long did the peer take, and which requests time out.
+struct InFlight {
+    sent_at: Instant,
+    label: String,
+}
+
 struct Inner {
     next_cseq: AtomicU32,
 
     pending_send: Mutex<Vec<RtspRequest>>,
     pending_response: Mutex<BTreeMap<u32, RtspSender>>,
     pending_response_fifo: Mutex<VecDeque<FifoPending>>,
+    in_flight: Mutex<BTreeMap<u32, InFlight>>,
 
     notify_pending: Notify,
     notify_closed: Notify,
@@ -66,7 +74,15 @@ impl RtspDrain {
             }
         }
 
+        self.inner.in_flight.lock().unwrap().clear();
         self.inner.notify_pending.notify();
+    }
+
+    /// Forget the in-flight record for `cseq` and report what it was and how long it took.
+    /// `None` when the request was never drained (or already reported).
+    pub fn take_in_flight(&self, cseq: u32) -> Option<(String, Duration)> {
+        let in_flight = self.inner.in_flight.lock().unwrap().remove(&cseq)?;
+        Some((in_flight.label, in_flight.sent_at.elapsed()))
     }
 
     pub fn feed(&self, resp: RtspResponse) {
@@ -97,7 +113,23 @@ impl RtspDrain {
     }
 
     pub fn drain(&mut self) -> Vec<RtspRequest> {
-        mem::take(&mut self.inner.pending_send.lock().unwrap())
+        let out = mem::take(&mut *self.inner.pending_send.lock().unwrap());
+
+        let now = Instant::now();
+        let mut in_flight = self.inner.in_flight.lock().unwrap();
+        for req in &out {
+            if let Some(cseq) = req.cseq {
+                in_flight.insert(
+                    cseq,
+                    InFlight {
+                        sent_at: now,
+                        label: format!("{} {}", req.method, req.url),
+                    },
+                );
+            }
+        }
+
+        out
     }
 }
 
@@ -154,6 +186,7 @@ impl RtspQueue {
             pending_send: Mutex::new(Vec::new()),
             pending_response: Mutex::new(BTreeMap::new()),
             pending_response_fifo: Mutex::new(VecDeque::new()),
+            in_flight: Mutex::new(BTreeMap::new()),
             notify_pending: Notify::new(),
             notify_closed: Notify::new(),
             closed: Mutex::new(false),
@@ -249,6 +282,15 @@ impl Future for RtspFuture {
             // We never move it after insertion above.
             && unsafe { Pin::new_unchecked(timeout) }.poll(cx).is_ready()
         {
+            match this.parent.in_flight.lock().unwrap().remove(&this.cseq) {
+                Some(in_flight) => warn!(
+                    "RTSP: {} cseq={} timed out after {:?} without a response",
+                    in_flight.label,
+                    this.cseq,
+                    in_flight.sent_at.elapsed()
+                ),
+                None => warn!("RTSP: cseq={} timed out before it was even sent", this.cseq),
+            }
             return Poll::Ready(Err(RtspError::Timeout));
         }
 

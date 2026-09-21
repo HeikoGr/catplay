@@ -100,6 +100,11 @@ impl TeardownTask {
         immediate: bool,
     ) -> RtspResult<()> {
         const TEARDOWN_SAFETY_MARGIN: Duration = Duration::from_millis(10);
+        // Some receivers (seen on CarPlay 210.81, a Stellantis NAC Wave 2) need a moment after
+        // ACK-ing an audio TEARDOWN before they accept a SETUP for the same stream again. Siri
+        // re-opens its microphone stream ~40ms after tearing it down; with the follow-up SETUP
+        // going out 5ms after the ACK, that receiver stalled for 10s and then answered 400.
+        const TEARDOWN_AUDIO_SETTLE: Duration = Duration::from_millis(250);
 
         // Stop recording (if possible; not a hard requirement) and wait for `latency` plus a small margin
         // to ensure everything already transmitted will be played
@@ -108,6 +113,7 @@ impl TeardownTask {
             sleep(latency + TEARDOWN_SAFETY_MARGIN).await;
         }
 
+        let is_audio = matches!(stream, TeardownPendingStream::Audio(_));
         let teardown = match &stream {
             TeardownPendingStream::Screen(_, uuid) => TeardownPayload::screen(stream_type, uuid.as_str()),
             TeardownPendingStream::Audio(_) => TeardownPayload::new(&[stream_type]),
@@ -123,6 +129,12 @@ impl TeardownTask {
         warn!("Teardown {stream_type:?}: sending TEARDOWN request");
         client.teardown(teardown).await?;
         warn!("Teardown {stream_type:?}: ACK-ed by receiver");
+
+        // The teardown only counts as finished once the receiver had time to release the stream;
+        // whoever drains this task (e.g. the next SETUP of the same stream) waits this out too.
+        if is_audio {
+            sleep(TEARDOWN_AUDIO_SETTLE).await;
+        }
         Ok(())
     }
 }

@@ -88,6 +88,9 @@ impl RtspDrain {
     pub fn feed(&self, resp: RtspResponse) {
         if self.inner.fifo {
             if let Some(mut pending) = self.inner.pending_response_fifo.lock().unwrap().pop_front() {
+                // FIFO responses carry no CSeq, so nobody looks the in-flight record up by it;
+                // drop it here or the event socket accumulates one per request for the session.
+                self.inner.in_flight.lock().unwrap().remove(&pending.cseq);
                 if let Some(sender) = pending.sender.take() {
                     let _ = sender.send(Ok(resp));
                     debug!("RTSP: fullfilling FIFO promise for cseq={}", pending.cseq);
@@ -359,5 +362,9 @@ mod tests {
         let response = current.await.expect("current FIFO response");
         assert_eq!(response.status, HttpStatus::Ok);
         assert_eq!(queue.size(), 0);
+
+        // Both in-flight records were released by the FIFO responses
+        assert!(drain.take_in_flight(0).is_none());
+        assert!(drain.take_in_flight(1).is_none());
     }
 }

@@ -8,7 +8,7 @@ use std::{
 };
 
 use log::{debug, info, warn};
-use tokio::{sync::watch, time::interval};
+use tokio::{sync::watch, time::sleep};
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
@@ -112,12 +112,27 @@ impl Bonjour {
                     for meta in raw.snapshot_service(handler2.service_type()) {
                         let _ = handler2.on_resolved(meta);
                     }
-                    raw.query_service(handler2.service_type());
-                    let mut query_tick = interval(Duration::from_secs(5));
+                    // A PTR query that goes out before the link is usable is simply lost: on a
+                    // freshly linked usb0 the IPv6 link-local address is unusable for ~1s (DAD),
+                    // and the peer's responder may not be up yet either. With a flat 5s period
+                    // that first miss cost a full 5s before the car's _airplay service was seen.
+                    // Re-ask quickly at first, then settle to the periodic query - the same shape
+                    // as the announce burst in mdns_backend.
+                    const QUERY_BURST: [Duration; 5] = [
+                        Duration::ZERO,
+                        Duration::from_millis(250),
+                        Duration::from_millis(500),
+                        Duration::from_millis(1000),
+                        Duration::from_millis(2000),
+                    ];
+                    const QUERY_PERIOD: Duration = Duration::from_secs(5);
+                    let mut burst = QUERY_BURST.into_iter();
+                    let mut next_query = Box::pin(sleep(burst.next().unwrap_or(QUERY_PERIOD)));
                     loop {
                         tokio::select! {
-                            _ = query_tick.tick() => {
+                            _ = &mut next_query => {
                                 raw.query_service(handler2.service_type());
+                                next_query = Box::pin(sleep(burst.next().unwrap_or(QUERY_PERIOD)));
                             }
                             event = events.recv() => {
                                 let ev = match event {

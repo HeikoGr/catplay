@@ -13,7 +13,9 @@ use catplay_carplay_tx_gadget::client::{CarPlayUsbClientGadget, CarPlayUsbClient
 use catplay_hap::HomekitStorageRef;
 use catplay_iap2_usb::GadgetError;
 use catplay_mfi::MfiDeficeRef;
-use catplay_util::{AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select, mpsc};
+use catplay_util::{
+    AsyncShutdown, EventReconciler, EventSleeper, EventToken, Reconcilable, Reconciler, deadline_after, event_select, mpsc,
+};
 use log::{debug, error, info};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -265,21 +267,14 @@ impl Reconcilable for ProdGadget {
         }
 
         // TODO: this doesn't properly go back to `blocked` after transmit session is closed
-        rx.child_mut().set_invites_blocked(self.last_tx.lock().unwrap().is_none());
+        rx.child_mut()
+            .set_invites_blocked(self.last_tx.lock().unwrap().is_none());
 
         match _status {
-            ProdGadgetState::Initial => {
-                ProdGadgetState::WaitingForUdc.into()
-            }
-            ProdGadgetState::WaitingForUdc => {
-                ProdGadgetState::WaitingForUsbTransmitterGadget.into()
-            }
-            ProdGadgetState::WaitingForUsbTransmitterGadget => {
-                ProdGadgetState::WaitingForWirelessCarPlayGadget.into()
-            }
-            ProdGadgetState::WaitingForWirelessCarPlayGadget => {
-                ProdGadgetState::WaitingForCar.into()
-            }
+            ProdGadgetState::Initial => ProdGadgetState::WaitingForUdc.into(),
+            ProdGadgetState::WaitingForUdc => ProdGadgetState::WaitingForUsbTransmitterGadget.into(),
+            ProdGadgetState::WaitingForUsbTransmitterGadget => ProdGadgetState::WaitingForWirelessCarPlayGadget.into(),
+            ProdGadgetState::WaitingForWirelessCarPlayGadget => ProdGadgetState::WaitingForCar.into(),
             ProdGadgetState::WaitingForCar => match tx.state() {
                 Ok(CarPlayUsbClientGadgetStatus::Transmitting | CarPlayUsbClientGadgetStatus::TransmitterReadyForPickup) => {
                     ProdGadgetState::WaitingForIPhone.into()

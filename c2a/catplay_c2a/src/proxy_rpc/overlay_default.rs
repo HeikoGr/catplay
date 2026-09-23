@@ -49,7 +49,12 @@ impl OverlayPolicy for OverlayPolicyDefault {
             return None;
         }
 
-        if let Some(req) = self.bluez.as_ref().as_ref().and_then(|bluez| bluez.get_pairing_request()) {
+        if let Some(req) = self
+            .bluez
+            .as_ref()
+            .as_ref()
+            .and_then(|bluez| bluez.get_pairing_request())
+        {
             return Some(UiState::Pairing {
                 device: req.remote_name.unwrap_or("unknown".into()),
                 pin: format!("{}", req.passkey),
@@ -65,7 +70,12 @@ impl OverlayPolicy for OverlayPolicyDefault {
     }
 
     fn on_hid_interact(&mut self) -> bool {
-        if let Some(req) = self.bluez.as_ref().as_ref().and_then(|bluez| bluez.get_pairing_request()) {
+        if let Some(req) = self
+            .bluez
+            .as_ref()
+            .as_ref()
+            .and_then(|bluez| bluez.get_pairing_request())
+        {
             req.accept();
             return false;
         }

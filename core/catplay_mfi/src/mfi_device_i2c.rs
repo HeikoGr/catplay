@@ -165,7 +165,10 @@ pub struct MfiDeviceI2C {
 
 impl MfiDeviceI2C {
     pub fn new(bus_offset: u32, dev_addr: u8) -> MfiResult<Self> {
-        let i2c_device = OpenOptions::new().read(true).write(true).open(format!("/dev/i2c-{bus_offset}"))?;
+        let i2c_device = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/dev/i2c-{bus_offset}"))?;
         let s = Self {
             device: Mutex::new(i2c_device),
             // bus_offset,

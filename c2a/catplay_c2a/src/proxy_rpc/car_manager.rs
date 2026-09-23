@@ -169,7 +169,9 @@ impl CarManager {
             self.pending_screen_setup,
             filling_slot(&mut self.cmd_next, tx.pop_command()),
             filling_slot_value(&mut self.tx_closed, tx.closed()),
-            self.iphone_peer.as_mut().map(|p| &mut p.car_to_iphone_proxy),
+            self.iphone_peer
+                .as_mut()
+                .map(|p| &mut p.car_to_iphone_proxy),
             self.tx_current
         )
     }
@@ -248,7 +250,8 @@ impl CarManager {
 
         // Don't attempt to forcefully steal Screen if we have a peer and arbitration is active as that will be glitchy
         if self.iphone_peer.is_none() {
-            self.modes.try_steal_screen(ResourceTransferPriority::NiceToHave);
+            self.modes
+                .try_steal_screen(ResourceTransferPriority::NiceToHave);
         }
         self.flush_modes();
 
@@ -269,7 +272,8 @@ impl CarManager {
             info!("Modes dirty, scheduling modesChanged {modes:?}");
 
             let tx = self.car_state.clone();
-            self.tx_queue.push_back(async move { tx.assert_modes(modes).await }.boxed());
+            self.tx_queue
+                .push_back(async move { tx.assert_modes(modes).await }.boxed());
         }
 
         if self.modes.has_screen() && !self.overlay.has_car_peer() && self.pending_screen_setup.is_none() {
@@ -511,7 +515,9 @@ impl CarManager {
         if let Command::HidSendReport(hid) = cmd.command_mut() {
             let car_media_clock = &mut self.car_media_clock;
 
-            let decoded = hid.timestamp.map(|t| car_media_clock.decode_local(NtpU64(t)));
+            let decoded = hid
+                .timestamp
+                .map(|t| car_media_clock.decode_local(NtpU64(t)));
             if let Some(decoded) = decoded {
                 debug!("HID event delta: {}", Pts(decoded));
             }
@@ -613,7 +619,8 @@ impl CarManager {
             }
             Command::RequestUI(_) => {
                 warn!("requestUI during overlay!");
-                self.modes.try_steal_screen(ResourceTransferPriority::UserInitiated);
+                self.modes
+                    .try_steal_screen(ResourceTransferPriority::UserInitiated);
                 self.modes.mark_dirty();
 
                 sleep(Duration::from_millis(100)).await;
@@ -628,7 +635,9 @@ impl Drop for CarManager {
     fn drop(&mut self) {
         // TODO ensure closed in all cases
         if let Some(phone) = self.iphone_peer.take() {
-            phone.iphone.close(RtspError::UnexpectedState("TX proxy is closing".into()));
+            phone
+                .iphone
+                .close(RtspError::UnexpectedState("TX proxy is closing".into()));
         }
     }
 }

@@ -42,6 +42,7 @@ pub struct CarManager {
     overlay: OverlayManager,
 
     modes: ModesArbiter,
+    initial_screen_steal_attempted: bool,
     night_mode: bool,
 
     tx_current: Option<LazyAsync<RtspResult<()>>>,
@@ -102,6 +103,7 @@ impl CarManager {
             tx_queue: Default::default(),
             night_mode: *info.night_mode.clone().unwrap_or_default(),
             modes: ModesArbiter::new(&info.modes),
+            initial_screen_steal_attempted: false,
             error: None,
             pending_screen_setup: Default::default(),
             car_state: car,
@@ -249,7 +251,8 @@ impl CarManager {
         self.flush_modes();
 
         // Don't attempt to forcefully steal Screen if we have a peer and arbitration is active as that will be glitchy
-        if self.iphone_peer.is_none() {
+        if self.iphone_peer.is_none() && !self.initial_screen_steal_attempted {
+            self.initial_screen_steal_attempted = true;
             self.modes
                 .try_steal_screen(ResourceTransferPriority::NiceToHave);
         }

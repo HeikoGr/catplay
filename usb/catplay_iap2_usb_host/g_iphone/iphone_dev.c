@@ -13,7 +13,12 @@
 #include "iap2_scan.h"
 
 #define IPHONE_ROLE_SWITCH_REBIND_DEBOUNCE_MS 1000
-#define IPHONE_ROLE_SWITCH_HOST_DELAY_MS 70
+/*
+ * Settle time between the head unit acknowledging 0x51 and us dropping the
+ * device role. The vendor firmware forces host mode 18ms after the request
+ * on a NAC Wave 2; this is the same order of magnitude.
+ */
+#define IPHONE_ROLE_SWITCH_HOST_DELAY_MS 20
 #define IPHONE_RECOVERY_COMMAND "/usr/bin/carlinkit_otalib usboot"
 #define IPHONE_RECOVERY_COMMAND_GADGET "/usr/bin/carlinkit_otalib gadget"
 
@@ -156,14 +161,21 @@ static int iphone_dev_bind_gadget(struct iphone_dev_data *data)
 {
 	int ret;
 
-	if (data->driver_registered)
-		return 0;
-
-	/* Before bind, always enter USB_ROLE_DEVICE */
+	/*
+	 * Before bind, always enter USB_ROLE_DEVICE. This must come before the
+	 * driver_registered check: the role-switch path goes to host without
+	 * unregistering the driver, so after a failed switch the driver is
+	 * still registered while the controller sits in host mode. Returning
+	 * early here left the dongle in host mode for good, with nothing on
+	 * the bus for the head unit to enumerate or retry against.
+	 */
 	ret = iphone_dev_set_otg_role_internal(data, USB_ROLE_DEVICE, false);
 	if (ret) {
 		return ret;
 	}
+
+	if (data->driver_registered)
+		return 0;
 
 	pr_info("iPhone: registering gadget\n");
 	ret = c2a_usb_composite_probe(&data->driver->drv);
@@ -437,7 +449,7 @@ static void iphone_dev_role_switch_work(struct work_struct *work)
 		data->role_switch_rebind_scheduled = false;
 	}
 
-	// msleep(IPHONE_ROLE_SWITCH_HOST_DELAY_MS);
+	msleep(IPHONE_ROLE_SWITCH_HOST_DELAY_MS);
 
 	if (iphone_dev_set_otg_role_internal(data, USB_ROLE_HOST, false)) {
 	// if (iphone_dev_set_otg_role(&data->g, USB_ROLE_HOST)) {
